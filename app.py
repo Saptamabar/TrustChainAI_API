@@ -48,7 +48,11 @@ def load_artifacts():
     BASE_DIR = "artifacts"
     
     # Muat Model LSTM (compile=False agar cepat & aman)
-    model = tf.keras.models.load_model(os.path.join(BASE_DIR, "best_lstm.keras"), compile=False)
+    model = tf.keras.models.load_model(
+        os.path.join(BASE_DIR, "best_lstm.keras"), 
+        compile=False,
+        custom_objects={"quantization_config": None}
+    )
     
     # Muat Pipeline Preprocessing
     scaler = joblib.load(os.path.join(BASE_DIR, "scaler.pkl"))
