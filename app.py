@@ -8,6 +8,13 @@ from fastapi import FastAPI, Depends, HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 
+class SafeDense(tf.keras.layers.Dense):
+       @classmethod
+       def from_config(cls, config):
+           # Hapus parameter yang tidak dikenali sebelum layer dibentuk
+           config.pop('quantization_config', None)
+           return super().from_config(config)
+
 # ─────────────────────────────────────────────
 # KONFIGURASI KEAMANAN (API KEY)
 # ─────────────────────────────────────────────
@@ -49,10 +56,10 @@ def load_artifacts():
     
     # Muat Model LSTM (compile=False agar cepat & aman)
     model = tf.keras.models.load_model(
-        os.path.join(BASE_DIR, "best_lstm.keras"), 
-        compile=False,
-        custom_objects={"quantization_config": None}
-    )
+       os.path.join(BASE_DIR, "best_lstm.keras"), 
+       compile=False,
+       custom_objects={"Dense": SafeDense}
+   )
     
     # Muat Pipeline Preprocessing
     scaler = joblib.load(os.path.join(BASE_DIR, "scaler.pkl"))
