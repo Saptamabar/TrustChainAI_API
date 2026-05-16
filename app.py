@@ -30,25 +30,22 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-    # 1. Log transform
     df["TransactionAmt_log"] = np.log1p(df["TransactionAmt"])
-
-    # 2. Jam & hari
     df["hour"] = (df["TransactionDT"] // 3600) % 24
     df["day"]  = (df["TransactionDT"] // 86400) % 7
 
-    # 3. D_norm = D[col] - transaction_day  ← rumus yang benar dari training
     transaction_day = df["TransactionDT"] // 86400
-    d_cols = [f"D{i}" for i in range(1, 16)]
+
+    # ✅ Skip D7 — tidak ada di dataset IEEE
+    d_cols = [f"D{i}" for i in range(1, 16) if i != 7]
+
     for col in d_cols:
         if col in df.columns:
             df[f"{col}_norm"] = df[col] - transaction_day
         else:
-            df[f"{col}_norm"] = np.nan  # akan diimputasi oleh num_imputer
-    
-    # 4. Drop kolom D raw
-    df.drop(columns=[c for c in d_cols if c in df.columns], inplace=True)
+            df[f"{col}_norm"] = np.nan
 
+    df.drop(columns=[c for c in d_cols if c in df.columns], inplace=True)
     return df
 
 
