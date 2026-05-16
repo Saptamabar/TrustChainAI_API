@@ -142,15 +142,25 @@ def home():
 @app.post("/predict")
 def predict_fraud(request: TransactionRequest, api_key: str = Depends(get_api_key)):
     try:
-        # 1. Konversi JSON ke DataFrame
         df = pd.DataFrame(request.data)
-
+        
+        # ── DEBUG SEMENTARA ──
+        print("=== KOLOM SEBELUM FE ===", df.columns.tolist())
+        
         df = apply_feature_engineering(df)
         
-        # Pisahkan kolom sesuai tipe (hindari kolom yang tidak dikenali)
+        print("=== KOLOM SETELAH FE ===", df.columns.tolist())
+        
         cat_cols = [c for c in df.columns if df[c].dtype == "object"]
         num_cols = [c for c in df.columns if df[c].dtype != "object"]
         
+        # ── DEBUG SEMENTARA ──
+        print("=== FEATURE_NAMES (model) ===", feature_names[:10], "...")
+        print("=== NUM_COLS (dari df) ===", num_cols[:10], "...")
+        missing_in_df = set(feature_names) - set(df.columns)
+        print("=== MISSING DI DF ===", missing_in_df)
+        # ── END DEBUG ──
+
         # 2. Preprocessing Data Kategorik
         df[cat_cols] = df[cat_cols].fillna("missing")
         for col in cat_cols:
