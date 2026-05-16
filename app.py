@@ -161,9 +161,10 @@ def predict_fraud(request: TransactionRequest, api_key: str = Depends(get_api_ke
         # 4. Reindex — pastikan kolom urut & lengkap sesuai training
         df = df.reindex(columns=feature_names_model)
 
-        # 5. Preprocessing Numerik — transform seluruh df sekaligus
-        df[:] = num_imputer.transform(df)
-
+        # 5. Preprocessing Numerik — HANYA kolom non-kategorik
+        num_cols_for_imputer = [c for c in feature_names_model if c not in encoders]
+        df[num_cols_for_imputer] = num_imputer.transform(df[num_cols_for_imputer])
+        
         # 6. Anomaly Score dari Isolation Forest
         raw_scores  = iso_forest.decision_function(df)
         scores_norm = np.clip((-raw_scores - (-0.5)) / (0.5 - (-0.5) + 1e-9), 0, 1)
