@@ -62,6 +62,19 @@ def load_artifacts():
     BASE_DIR = "artifacts"
     
     # Muat Model LSTM (compile=False agar cepat & aman)
+    from keras.src.saving import serialization_lib
+
+    _original_deserialize = serialization_lib.deserialize_keras_object
+
+    def _patched_deserialize(config, *args, **kwargs):
+        if isinstance(config, dict):
+            inner = config.get("config", {})
+            if isinstance(inner, dict):
+                inner.pop("quantization_config", None)
+        return _original_deserialize(config, *args, **kwargs)
+
+    serialization_lib.deserialize_keras_object = _patched_deserialize
+
     model = tf.keras.models.load_model(
         os.path.join(BASE_DIR, "best_lstm.keras"),
         compile=False
