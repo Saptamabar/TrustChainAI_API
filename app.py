@@ -142,90 +142,72 @@ def home():
 @app.post("/predict")
 def predict_fraud(request: TransactionRequest, api_key: str = Depends(get_api_key)):
     try:
+        # 1. Konversi & Feature Engineering
         df = pd.DataFrame(request.data)
-        
-        # ── DEBUG SEMENTARA ──
-        print("=== KOLOM SEBELUM FE ===", df.columns.tolist())
-        
         df = apply_feature_engineering(df)
-        
-        print("=== KOLOM SETELAH FE ===", df.columns.tolist())
-        
-        cat_cols = [c for c in df.columns if df[c].dtype == "object"]
-        num_cols = [c for c in df.columns if df[c].dtype != "object"]
-        
-        # ── DEBUG SEMENTARA ──
-        print("=== FEATURE_NAMES (model) ===", feature_names[:10], "...")
-        print("=== NUM_COLS (dari df) ===", num_cols[:10], "...")
-        missing_in_df = set(feature_names) - set(df.columns)
-        print("=== MISSING DI DF ===", missing_in_df)
-        # ── END DEBUG ──
 
-        # 2. Preprocessing Data Kategorik
+        # 2. Pisahkan feature_names tanpa Anomaly_Score_IF
+        feature_names_model = [f for f in feature_names if f != "Anomaly_Score_IF"]
+
+        # 3. Preprocessing Kategorik
+        cat_cols = [c for c in feature_names_model if c in df.columns and df[c].dtype == "object"]
         df[cat_cols] = df[cat_cols].fillna("missing")
         for col in cat_cols:
             if col in encoders:
-                # Tangani nilai baru (Unseen label) yang tidak ada saat training
                 known_classes = list(encoders[col].classes_)
                 df[col] = df[col].apply(lambda x: x if x in known_classes else "missing")
                 df[col] = encoders[col].transform(df[col].astype(str))
-                
-        # 3. Preprocessing Data Numerik
-        df[num_cols] = num_imputer.transform(df[num_cols])
-        
-        # 4. Dapatkan Anomaly Score dari Isolation Forest
-        raw_scores = iso_forest.decision_function(df)
-        scores_inv = -raw_scores
-        # Simulasi min-max statis (idealnya disimpan ke artefak, ini aproksimasi aman)
-        scores_norm = (scores_inv - (-0.5)) / (0.5 - (-0.5) + 1e-9) 
-        scores_norm = np.clip(scores_norm, 0, 1)
-        
-        # 5. Scaling
+
+        # 4. Reindex — pastikan kolom urut & lengkap sesuai training
+        df = df.reindex(columns=feature_names_model)
+
+        # 5. Preprocessing Numerik — transform seluruh df sekaligus
+        df[:] = num_imputer.transform(df)
+
+        # 6. Anomaly Score dari Isolation Forest
+        raw_scores  = iso_forest.decision_function(df)
+        scores_norm = np.clip((-raw_scores - (-0.5)) / (0.5 - (-0.5) + 1e-9), 0, 1)
+
+        # 7. Scaling
         df_scaled = scaler.transform(df)
-        
-        # 6. Gabungkan Fitur (2D Matrix siap pakai)
+
+        # 8. Gabungkan dengan Anomaly Score → shape (1, 423)
         X_aug_2d = np.hstack([df_scaled, scores_norm.reshape(-1, 1)])
-        
-        # 7. Prediksi LSTM
+
+        # 9. Prediksi LSTM
         X_lstm_3d = X_aug_2d.reshape(X_aug_2d.shape[0], 1, X_aug_2d.shape[1])
         preds = model.predict_on_batch(X_lstm_3d)
-        prob = float(preds[0][0])
-        is_fraud = bool(prob > 0.5) # Threshold bisa kamu sesuaikan di sini
-        
-        # 8. Eksekusi SHAP (Explainability)
-        shap_vals = explainer.shap_values(X_aug_2d[0:1]) # Proses 1 transaksi saja
-        
-        # Format penjelasan SHAP
+        prob     = float(preds[0][0])
+        is_fraud = bool(prob > 0.5)
+
+        # 10. SHAP Explainability
+        shap_vals = explainer.shap_values(X_aug_2d[0:1])
+
         explanation = []
         for i, feat_name in enumerate(feature_names):
             contribution = float(shap_vals[0][i])
-            if abs(contribution) > 0.001: # Abaikan fitur yang tidak berkontribusi
-                # Ambil nilai input asli (sebelum scaling) jika tersedia di df
+            if abs(contribution) > 0.001:
                 original_value = request.data[0].get(feat_name, "N/A")
                 if feat_name == "Anomaly_Score_IF":
                     original_value = round(float(scores_norm[0]), 3)
-                
                 explanation.append({
-                    "feature": feat_name,
+                    "feature":      feat_name,
                     "original_value": original_value,
                     "contribution": round(contribution, 4)
                 })
-        
-        # Urutkan berdasarkan fitur paling berpengaruh (absolut terbesar)
+
         explanation.sort(key=lambda x: abs(x["contribution"]), reverse=True)
-        top_reasons = explanation[:5] # Ambil 5 alasan utama saja
-        
-        # 9. Kembalikan Response
+
         return {
             "status": "success",
             "prediction": {
-                "fraud_probability": round(prob, 4),
-                "is_fraud": is_fraud,
+                "fraud_probability":    round(prob, 4),
+                "is_fraud":             is_fraud,
                 "confidence_percentage": f"{round(prob * 100, 2)}%" if is_fraud else f"{round((1 - prob) * 100, 2)}%"
             },
             "explainability": {
                 "message": "Fitur-fitur ini sangat mendorong transaksi ke arah " + ("Fraud" if is_fraud else "Normal"),
-                "top_influencers": top_reasons
+                "top_influencers": explanation[:5]
             }
         }
 
