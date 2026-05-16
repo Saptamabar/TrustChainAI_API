@@ -21,12 +21,36 @@ class SafeDense(tf.keras.layers.Dense):
     def from_config(cls, config):
         config.pop('quantization_config', None)
         return super().from_config(config)
-
+    
 # ─────────────────────────────────────────────
 # KONFIGURASI KEAMANAN (API KEY)
 # ─────────────────────────────────────────────
 # Di dunia nyata, simpan ini di file .env atau di environment variable
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
+    # 1. Log transform
+    df["TransactionAmt_log"] = np.log1p(df["TransactionAmt"])
+
+    # 2. Jam & hari
+    df["hour"] = (df["TransactionDT"] // 3600) % 24
+    df["day"]  = (df["TransactionDT"] // 86400) % 7
+
+    # 3. D_norm = D[col] - transaction_day  ← rumus yang benar dari training
+    transaction_day = df["TransactionDT"] // 86400
+    d_cols = [f"D{i}" for i in range(1, 16)]
+    for col in d_cols:
+        if col in df.columns:
+            df[f"{col}_norm"] = df[col] - transaction_day
+        else:
+            df[f"{col}_norm"] = np.nan  # akan diimputasi oleh num_imputer
+    
+    # 4. Drop kolom D raw
+    df.drop(columns=[c for c in d_cols if c in df.columns], inplace=True)
+
+    return df
+
 
 def get_api_key(api_key_header: str = Security(api_key_header)):
     secret_api_key = os.getenv("SECRET_API_KEY")
@@ -123,6 +147,8 @@ def predict_fraud(request: TransactionRequest, api_key: str = Depends(get_api_ke
     try:
         # 1. Konversi JSON ke DataFrame
         df = pd.DataFrame(request.data)
+
+        df = apply_feature_engineering(df)
         
         # Pisahkan kolom sesuai tipe (hindari kolom yang tidak dikenali)
         cat_cols = [c for c in df.columns if df[c].dtype == "object"]
