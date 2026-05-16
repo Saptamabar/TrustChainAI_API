@@ -150,6 +150,7 @@ def predict_fraud(request: TransactionRequest, api_key: str = Depends(get_api_ke
         feature_names_model = [f for f in feature_names if f != "Anomaly_Score_IF"]
 
         # 3. Preprocessing Kategorik
+        # 3. Preprocessing Kategorik
         cat_cols = [c for c in feature_names_model if c in df.columns and df[c].dtype == "object"]
         df[cat_cols] = df[cat_cols].fillna("missing")
         for col in cat_cols:
@@ -157,29 +158,30 @@ def predict_fraud(request: TransactionRequest, api_key: str = Depends(get_api_ke
                 known_classes = list(encoders[col].classes_)
                 df[col] = df[col].apply(lambda x: x if x in known_classes else "missing")
                 df[col] = encoders[col].transform(df[col].astype(str))
+            else:
+                df[col] = 0  # kategorik tapi tidak di encoders
 
-        # 4. Reindex — pastikan kolom urut & lengkap sesuai training
+        # 4. Reindex sesuai urutan training
         df = df.reindex(columns=feature_names_model)
 
-        # 5. Preprocessing Numerik — HANYA kolom non-kategorik
+        # 5. Paksa kolom yang masih object → 0 (safety net)
+        for col in df.columns:
+            if df[col].dtype == "object":
+                df[col] = 0
+
+        # 6. Imputer hanya untuk kolom numerik (bukan key di encoders)
         num_cols_for_imputer = [c for c in feature_names_model if c not in encoders]
         df[num_cols_for_imputer] = num_imputer.transform(df[num_cols_for_imputer])
-        
-        # 6. Anomaly Score dari Isolation Forest
+
+        # 7. Anomaly Score
         raw_scores  = iso_forest.decision_function(df)
         scores_norm = np.clip((-raw_scores - (-0.5)) / (0.5 - (-0.5) + 1e-9), 0, 1)
 
-        # 7. Scaling
+        # 8. Scaling
         df_scaled = scaler.transform(df)
 
-        # 8. Gabungkan dengan Anomaly Score → shape (1, 423)
+        # 9. Gabungkan Anomaly Score
         X_aug_2d = np.hstack([df_scaled, scores_norm.reshape(-1, 1)])
-
-        # 9. Prediksi LSTM
-        X_lstm_3d = X_aug_2d.reshape(X_aug_2d.shape[0], 1, X_aug_2d.shape[1])
-        preds = model.predict_on_batch(X_lstm_3d)
-        prob     = float(preds[0][0])
-        is_fraud = bool(prob > 0.5)
 
         # 10. SHAP Explainability
         shap_vals = explainer.shap_values(X_aug_2d[0:1])
